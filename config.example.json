@@ -1,0 +1,17 @@
+{
+  "directory": "./scripts",
+  "filter": ".sh",
+  "mode": "parallel",
+  "recursive": true,
+  "force": false,
+  "sort": "name",
+  "reverse": false,
+  "jobs": 4,
+  "timeout": 120,
+  "output_dir": "./logs",
+  "dry_run": false,
+  "verbose": false,
+  "log": true,
+  "continue_on_error": true,
+  "script_args": []
+}

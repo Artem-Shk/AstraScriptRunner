@@ -1,0 +1,18 @@
+# Example configuration for script_runner (YAML flavour).
+# CLI arguments always override the values defined here.
+directory: ./scripts
+filter: .sh
+mode: sequential
+recursive: true
+force: false
+sort: mtime
+reverse: true
+timeout: 60
+output_dir: ./logs
+dry_run: false
+verbose: true
+log: true
+continue_on_error: true
+script_args:
+  - --env
+  - prod

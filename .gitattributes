@@ -1,0 +1,4 @@
+# Keep shell scripts and the Python entry point with LF endings on all platforms.
+*.sh    text eol=lf
+*.bash  text eol=lf
+*.py    text eol=lf
