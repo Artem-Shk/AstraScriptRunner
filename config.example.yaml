@@ -5,6 +5,7 @@ filter: .sh
 mode: sequential
 recursive: true
 force: false
+chmod: false
 sort: mtime
 reverse: true
 timeout: 60

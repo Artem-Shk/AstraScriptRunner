@@ -22,6 +22,7 @@ import logging
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -43,6 +44,7 @@ DEFAULTS: dict = {
     "mode": "sequential",
     "recursive": False,
     "force": False,
+    "chmod": False,
     "sort": "name",
     "reverse": False,
     "jobs": None,
@@ -274,6 +276,27 @@ def sort_scripts(scripts: list[Script], key: str, reverse: bool = False) -> list
     return sorted(scripts, key=keyfuncs[key], reverse=reverse)
 
 
+def grant_execute_bit(path: Path) -> bool:
+    """Add the POSIX execute bit to *path* (equivalent to ``chmod +x``).
+
+    The current permission bits are preserved; only ``u+x``, ``g+x`` and
+    ``o+x`` are added so the file stays readable/writable exactly as before.
+
+    Args:
+        path: File to make executable.
+
+    Returns:
+        True when the file is executable after the call, False otherwise.
+    """
+    try:
+        current = path.stat().st_mode
+        path.chmod(current | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    except OSError as exc:
+        LOGGER.warning("Cannot add execute bit to %s: %s", path, exc)
+        return False
+    return os.access(path, os.X_OK)
+
+
 def discover_scripts(
     directory: Path,
     recursive: bool,
@@ -281,6 +304,7 @@ def discover_scripts(
     sort_key: str,
     reverse: bool,
     force: bool,
+    make_executable: bool = False,
 ) -> list[Script]:
     """Discover, filter and sort scripts inside *directory*.
 
@@ -290,7 +314,9 @@ def discover_scripts(
         name_filter: Optional name/extension filter.
         sort_key: Sort key (``name`` / ``mtime`` / ``size``).
         reverse: Reverse the sort order.
-        force: Keep non-executable files as well.
+        force: Keep non-executable files as well (without changing them).
+        make_executable: Grant the execute bit to non-executable scripts
+            before running them (like ``chmod +x``).
 
     Returns:
         Sorted list of :class:`Script` objects.
@@ -305,27 +331,38 @@ def discover_scripts(
 
     found: list[Script] = []
     skipped_not_executable = 0
+    granted = 0
 
     for path in iter_candidate_files(directory, recursive):
         if not matches_filter(path.name, name_filter):
             continue
         try:
-            stat = path.stat()
+            path_stat = path.stat()
         except OSError as exc:
             LOGGER.warning("Cannot stat %s: %s", path, exc)
             continue
 
-        script = Script(path=path.resolve(), size=stat.st_size, mtime=stat.st_mtime)
-        if not force and not script.executable:
-            skipped_not_executable += 1
-            LOGGER.debug("Not executable, skipping: %s", path)
-            continue
+        script = Script(path=path.resolve(), size=path_stat.st_size,
+                        mtime=path_stat.st_mtime)
+        if not script.executable:
+            if make_executable:
+                if not grant_execute_bit(script.path):
+                    skipped_not_executable += 1
+                    continue
+                granted += 1
+                LOGGER.info("Granted execute bit: %s", script.path)
+            elif not force:
+                skipped_not_executable += 1
+                LOGGER.debug("Not executable, skipping: %s", path)
+                continue
         found.append(script)
 
+    if granted:
+        LOGGER.info("%d script(s) made executable (chmod +x).", granted)
     if skipped_not_executable:
         LOGGER.info(
             "%d script(s) skipped because they are not executable "
-            "(use --force to run them anyway).",
+            "(use --force to run them anyway, or --chmod to grant +x).",
             skipped_not_executable,
         )
 
@@ -416,13 +453,19 @@ class ScriptRunner:
             Process exit code: 0 if everything succeeded, 1 if any script
             failed, 2 when no scripts were found.
         """
+        # A dry run must never modify the file system: include non-executable
+        # scripts in the plan (so --chmod is visible), but do not apply chmod.
+        dry_run = bool(self.settings["dry_run"])
+        want_chmod = bool(self.settings["chmod"])
+
         scripts = discover_scripts(
             directory=self.directory,
             recursive=bool(self.settings["recursive"]),
             name_filter=self.settings["filter"],
             sort_key=self.settings["sort"],
             reverse=bool(self.settings["reverse"]),
-            force=bool(self.settings["force"]),
+            force=bool(self.settings["force"]) or (want_chmod and dry_run),
+            make_executable=want_chmod and not dry_run,
         )
 
         if not scripts:
@@ -635,6 +678,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Scan sub-directories recursively.")
     parser.add_argument("--force", action="store_true", default=None,
                         help="Run scripts even without the executable bit.")
+    parser.add_argument("--chmod", action="store_true", default=None,
+                        help="Grant the execute bit (chmod +x) to scripts "
+                             "that lack it, then run them.")
     parser.add_argument("-s", "--sort", choices=VALID_SORTS,
                         help="Sort order (default: name).")
     parser.add_argument("--reverse", action="store_true", default=None,

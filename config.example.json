@@ -4,6 +4,7 @@
   "mode": "parallel",
   "recursive": true,
   "force": false,
+  "chmod": false,
   "sort": "name",
   "reverse": false,
   "jobs": 4,
